@@ -1,62 +1,49 @@
 package mongodb
 
 import (
+	"errors"
 	"fmt"
-	"os"
+	"log"
+
+	"github.com/micro/go-micro"
 
 	"gopkg.in/mgo.v2"
 )
 
-// LH: @todo Maybe better to make all of this into a MongoSession manager where each session will hold a single collection.
+/*
+ TODOs:
+  - Use global logger
+  - Any safe way to close mongo session?
+*/
+
 type MongoSession struct {
 	session *mgo.Session
+	dbName  string
 }
 
-// LH: @todo this should later get a config struct passed to be set up e.g. for production mode etc.
-func New() *mgo.Session {
-	fmt.Println("Initializing mongo connection...")
+func New(service micro.Service) (*MongoSession, error) {
+	log.Println("Initializing mongo connection...")
 
-	var mongoUrl string
-
-	// LH: @todo add more advanced behaviour for production environment e.g. discover which mongoDB to be used
-	eUrl := os.Getenv("MONGO_URL")
-	if len(eUrl) == 0 {
-		mongoUrl = "localhost:27017"
-	} else {
-		mongoUrl = eUrl
+	mongoURL, found := service.Server().Options().Metadata["MONGO_URL"]
+	if !found {
+		fmt.Println("WARNING: MONGO_URL not set in Server's Metadata. Connect to localhost now.")
+		mongoURL = "localhost:27017"
 	}
 
-	session, err := mgo.Dial(mongoUrl)
+	dbName, found := service.Server().Options().Metadata["MONGO_DB"]
+	if !found {
+		return &MongoSession{}, errors.New("MONGO_DB not set in Server's Metadata")
+	}
+
+	session, err := mgo.Dial(mongoURL)
 	if err != nil {
-		fmt.Println("In application.json you have specified to use mongoDB, but unfortunately mongoDB is not accessible at " + mongoUrl + ". Exiting now")
-		fmt.Println("NO DB Connection to:", mongoUrl)
-		panic("Terminating...")
-
+		fmt.Println("NO DB Connection to:", mongoURL)
+		return &MongoSession{}, err
 	}
 
-	return session
+	return &MongoSession{session, dbName}, nil
 }
 
-/*
-	USAGE EXAMPLE:
-
-	type Person struct {
-		Name string
-		Phone string
-	}
-
-		c := session.DB("test").C("people")
-		err = c.Insert(&Person{"Ale", "+55 53 8116 9639"},
-			&Person{"Cla", "+55 53 8402 8510"})
-		if err != nil {
-			log.Fatal(err)
-		}
-
-		result := Person{}
-		err = c.Find(bson.M{"name": "Ale"}).One(&result)
-		if err != nil {
-			log.Fatal(err)
-		}
-
-		fmt.Println("Phone:", result.Phone)
-*/
+func (m *MongoSession) GetCollection(name string) *mgo.Collection {
+	return m.session.DB(m.dbName).C(name)
+}
